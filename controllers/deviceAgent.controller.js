@@ -338,6 +338,9 @@ const bundlePath = () =>
 let bundleCache = null;
 
 const readBundle = async () => {
+  console.log("[AGENT] __dirname:", __dirname);
+  console.log("[AGENT] Resolved bundle path:", bundlePath());
+  console.log("[AGENT] Bundle exists:", fs.existsSync(bundlePath()));
   const file = bundlePath();
   const stat = await fs.promises.stat(file).catch(() => null);
 
@@ -373,12 +376,14 @@ const getBundleMeta = async (req, res) => {
 };
 
 const getBundle = async (req, res) => {
+  console.log("[AGENT] Serving bundle to agent");
   const bundle = await readBundle();
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
   res.setHeader("Content-Length", String(bundle.sizeBytes));
   res.setHeader("X-Agent-Version", bundle.version);
   res.setHeader("X-Agent-Sha256", bundle.sha256);
   res.setHeader("Cache-Control", "no-store");
+  console.log("[AGENT] Serving bundle to agent continued, headers set, sending content...");
   return res.status(200).end(bundle.content);
 };
 
