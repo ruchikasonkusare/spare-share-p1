@@ -324,8 +324,15 @@ const getRuntimeArchive = async (req, res) => {
 
 const bundlePath = () =>
   path.resolve(
-    process.env.AGENT_BUNDLE_PATH ||
-      path.join(__dirname, "..", "..", "agent", "dist", "spareshare-agent.js")
+    //process.env.AGENT_BUNDLE_PATH ||
+      //path.join(__dirname, "..", "..", "agent", "dist", "spareshare-agent.js")
+      path.join(
+        __dirname,
+        "..",
+        "storage",
+        "agent",
+        "spareshare-agent.js"
+      )
   );
 
 let bundleCache = null;
