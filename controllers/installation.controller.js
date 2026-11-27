@@ -305,7 +305,7 @@ const generateRuntimeDownload = (config) => {
 const downloadPip = generateRuntimeDownload({
   name: "pip",
   objectKeyEnv: "B2_OBJECT_PIP",
-  filename: pip.pyz",
+  filename: "pip.pyz",
 });
 
 
