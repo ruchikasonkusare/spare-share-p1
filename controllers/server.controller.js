@@ -137,8 +137,168 @@ const allowedUpdateFields = [
 
 
 // CREATE SERVER
+// const createServer = async (req, res, next) => {
+//   try {
+//     const userId = getUserId(req);
+
+//     const {
+//       name,
+//       slug,
+//       description,
+//       visibility,
+//       port,
+//       environmentVersionId,
+//       uploadType,
+//       repository,
+//       resources,
+//       collaborators,
+//       monitoringEnabled,
+//       build,
+//       deviceId,
+//     } = req.body || {};
+
+//     const serverCount = await Server.countDocuments({
+//       owner: userId,
+//       isActive: true,
+//       status: { $ne: "deleted" },
+//     });
+
+//     if (serverCount >= MAX_SERVERS_PER_USER) {
+//       throw createError(
+//         `You can create at most ${MAX_SERVERS_PER_USER} servers.`,
+//         409,
+//         "SERVER_LIMIT_REACHED"
+//       );
+//     }
+
+//     if (typeof name !== "string" || !name.trim()) {
+//       throw createError(
+//         "Server name is required.",
+//         400,
+//         "SERVER_NAME_REQUIRED"
+//       );
+//     }
+
+//     const normalizedSlug = createSlug(
+//       typeof slug === "string" && slug.trim()
+//         ? slug
+//         : name
+//     );
+
+//     if (!normalizedSlug) {
+//       throw createError(
+//         "A valid server slug could not be generated.",
+//         400,
+//         "INVALID_SERVER_SLUG"
+//       );
+//     }
+
+//     // Check slug availability before insertion
+//     const slugCheck = await isSlugAvailable(userId, normalizedSlug);
+
+//     if (!slugCheck.available) {
+//       throw createError(
+//         "You already have a server with this slug.",
+//         409,
+//         "SERVER_SLUG_ALREADY_EXISTS"
+//       );
+//     }
+
+//     if (collaborators !== undefined && !Array.isArray(collaborators)) {
+//       throw createError(
+//         "Collaborators must be an array of user IDs.",
+//         400,
+//         "INVALID_COLLABORATORS"
+//       );
+//     }
+
+//     const collaboratorIds = collaborators ?? [];
+
+//     for (const id of collaboratorIds) {
+//       if (!isValidObjectId(id)) {
+//         throw createError(
+//           "One or more collaborator IDs are invalid.",
+//           400,
+//           "INVALID_COLLABORATOR_ID"
+//         );
+//       }
+//     }
+
+//     if (
+//       environmentVersionId !== undefined &&
+//       !isValidObjectId(environmentVersionId)
+//     ) {
+//       throw createError(
+//         "Invalid environment version ID.",
+//         400,
+//         "INVALID_ENVIRONMENT_VERSION_ID"
+//       );
+//     }
+
+//     // Resolve everything that can fail before anything is written.
+//     const resolvedRepository = await resolveRepository({ userId, input: repository });
+//     const resolvedBuild = resolveBuildSettings(build);
+//     const hostingDevice = deviceId !== undefined && deviceId !== null
+//       ? await findUserDevice(userId, deviceId)
+//       : null;
+
+//     const server = await Server.create({
+//       owner: userId,
+//       name: name.trim(),
+//       slug: slugCheck.slug,
+//       description,
+//       visibility,
+//       port: validatePort(port),
+//       environmentVersionId,
+//       uploadType: uploadType || (resolvedRepository ? "git" : undefined),
+//       repository: resolvedRepository,
+//       build: resolvedBuild,
+//       status: "stopped",
+//       activeDeviceId: hostingDevice ? hostingDevice._id : null,
+//       resources,
+//       collaborators: [
+//         ...new Set([
+//           userId.toString(),
+//           ...collaboratorIds.map(String),
+//         ]),
+//       ],
+//       // Monitoring drives self-healing and failover, so it is on unless
+//       // the owner turns it off.
+//       monitoringEnabled: monitoringEnabled ?? true,
+//     });
+
+//     // Every server gets its permanent URL immediately.
+//     const endpoint = await ensureServerEndpoint(server);
+
+//     if (hostingDevice) {
+//       await DeviceServer.findOneAndUpdate(
+//         { serverId: server._id, deviceId: hostingDevice._id },
+//         {
+//           $set: { role: "primary", priority: 1, status: "assigned" },
+//           $setOnInsert: { assignedAt: new Date() },
+//         },
+//         { upsert: true, new: true }
+//       );
+//     }
+
+//     return res.status(201).json({
+//       success: true,
+//       message: "Server created successfully.",
+//       data: { server, permanentUrl: buildPermanentLink(endpoint) },
+//     });
+//   } catch (error) {
+//     return handleServerError(error, next);
+//   }
+// };
+
+
+
+// CREATE SERVER — FULL ERROR DIAGNOSTICS
 const createServer = async (req, res, next) => {
+  let stage = "INITIALIZATION";
+
   try {
+    stage = "GET_USER_ID";
     const userId = getUserId(req);
 
     const {
@@ -157,10 +317,24 @@ const createServer = async (req, res, next) => {
       deviceId,
     } = req.body || {};
 
+    console.log("[CREATE SERVER] Request received:", {
+      userId: String(userId),
+      name,
+      requestedSlug: slug,
+      deviceId: deviceId ? String(deviceId) : null,
+      timestamp: new Date().toISOString(),
+    });
+
+    stage = "CHECK_SERVER_LIMIT";
     const serverCount = await Server.countDocuments({
       owner: userId,
       isActive: true,
       status: { $ne: "deleted" },
+    });
+
+    console.log("[CREATE SERVER] Server count:", {
+      serverCount,
+      maxAllowed: MAX_SERVERS_PER_USER,
     });
 
     if (serverCount >= MAX_SERVERS_PER_USER) {
@@ -171,6 +345,8 @@ const createServer = async (req, res, next) => {
       );
     }
 
+    stage = "VALIDATE_SERVER_NAME";
+
     if (typeof name !== "string" || !name.trim()) {
       throw createError(
         "Server name is required.",
@@ -179,11 +355,16 @@ const createServer = async (req, res, next) => {
       );
     }
 
+    stage = "GENERATE_SLUG";
+
     const normalizedSlug = createSlug(
-      typeof slug === "string" && slug.trim()
-        ? slug
-        : name
+      typeof slug === "string" && slug.trim() ? slug : name
     );
+
+    console.log("[CREATE SERVER] Slug generated:", {
+      requestedSlug: slug,
+      normalizedSlug,
+    });
 
     if (!normalizedSlug) {
       throw createError(
@@ -193,16 +374,25 @@ const createServer = async (req, res, next) => {
       );
     }
 
-    // Check slug availability before insertion
+    stage = "CHECK_SLUG_AVAILABILITY";
+
     const slugCheck = await isSlugAvailable(userId, normalizedSlug);
+
+    console.log("[CREATE SERVER] Slug availability:", {
+      userId: String(userId),
+      normalizedSlug,
+      slugCheck,
+    });
 
     if (!slugCheck.available) {
       throw createError(
-        "You already have a server with this slug.",
+        `Slug "${normalizedSlug}" is unavailable.`,
         409,
         "SERVER_SLUG_ALREADY_EXISTS"
       );
     }
+
+    stage = "VALIDATE_COLLABORATORS";
 
     if (collaborators !== undefined && !Array.isArray(collaborators)) {
       throw createError(
@@ -224,6 +414,8 @@ const createServer = async (req, res, next) => {
       }
     }
 
+    stage = "VALIDATE_ENVIRONMENT";
+
     if (
       environmentVersionId !== undefined &&
       !isValidObjectId(environmentVersionId)
@@ -235,12 +427,28 @@ const createServer = async (req, res, next) => {
       );
     }
 
-    // Resolve everything that can fail before anything is written.
-    const resolvedRepository = await resolveRepository({ userId, input: repository });
+    stage = "RESOLVE_REPOSITORY";
+    const resolvedRepository = await resolveRepository({
+      userId,
+      input: repository,
+    });
+
+    stage = "RESOLVE_BUILD_SETTINGS";
     const resolvedBuild = resolveBuildSettings(build);
-    const hostingDevice = deviceId !== undefined && deviceId !== null
-      ? await findUserDevice(userId, deviceId)
-      : null;
+
+    stage = "FIND_HOSTING_DEVICE";
+    const hostingDevice =
+      deviceId !== undefined && deviceId !== null
+        ? await findUserDevice(userId, deviceId)
+        : null;
+
+    console.log("[CREATE SERVER] Hosting device:", {
+      requestedDeviceId: deviceId || null,
+      found: Boolean(hostingDevice),
+      databaseDeviceId: hostingDevice?._id?.toString() || null,
+    });
+
+    stage = "CREATE_SERVER_DOCUMENT";
 
     const server = await Server.create({
       owner: userId,
@@ -262,34 +470,70 @@ const createServer = async (req, res, next) => {
           ...collaboratorIds.map(String),
         ]),
       ],
-      // Monitoring drives self-healing and failover, so it is on unless
-      // the owner turns it off.
       monitoringEnabled: monitoringEnabled ?? true,
     });
 
-    // Every server gets its permanent URL immediately.
+    console.log("[CREATE SERVER] Server document created:", {
+      serverId: server._id.toString(),
+      slug: server.slug,
+    });
+
+    stage = "CREATE_PERMANENT_ENDPOINT";
     const endpoint = await ensureServerEndpoint(server);
+
+    stage = "ASSIGN_HOSTING_DEVICE";
 
     if (hostingDevice) {
       await DeviceServer.findOneAndUpdate(
         { serverId: server._id, deviceId: hostingDevice._id },
         {
-          $set: { role: "primary", priority: 1, status: "assigned" },
-          $setOnInsert: { assignedAt: new Date() },
+          $set: {
+            role: "primary",
+            priority: 1,
+            status: "assigned",
+          },
+          $setOnInsert: {
+            assignedAt: new Date(),
+          },
         },
         { upsert: true, new: true }
       );
     }
 
+    stage = "SEND_SUCCESS_RESPONSE";
+
+    console.log("[CREATE SERVER] SUCCESS:", {
+      serverId: server._id.toString(),
+      slug: server.slug,
+    });
+
     return res.status(201).json({
       success: true,
       message: "Server created successfully.",
-      data: { server, permanentUrl: buildPermanentLink(endpoint) },
+      data: {
+        server,
+        permanentUrl: buildPermanentLink(endpoint),
+      },
     });
   } catch (error) {
+    // Log the original error without replacing its identity.
+    console.error("[CREATE SERVER] FAILED:", {
+      stage,
+      message: error?.message,
+      name: error?.name,
+      code: error?.code,
+      statusCode: error?.statusCode,
+      keyPattern: error?.keyPattern,
+      keyValue: error?.keyValue,
+      mongoCode: error?.mongoCode,
+      stack: error?.stack,
+      timestamp: new Date().toISOString(),
+    });
+
     return handleServerError(error, next);
   }
 };
+
 
 
 // GET ALL SERVERS OWNED BY OR SHARED WITH THE LOGGED-IN USER
